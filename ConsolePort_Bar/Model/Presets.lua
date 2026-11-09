@@ -8,6 +8,8 @@ end
 ---------------------------------------------------------------
 local Presets = {}; env.Presets = Presets;
 local Interface = env.Interface;
+local CLUSTER_DESIGN = env.Const.ClusterDesign;
+local clusterDesignNames = env.Variables.clusterDesign[1]:GetOptions();
 ---------------------------------------------------------------
 
 ---------------------------------------------------------------
@@ -45,9 +47,10 @@ local AllModifiers = env.RunTimeFilter({
 local Handle = Interface.ClusterHandle(); -- reuse one handle instance and warp it
 
 Presets.Default = {
-	name       = DEFAULT;
+	name       = env.L('Cluster - %s', clusterDesignNames[CLUSTER_DESIGN.Original]);
 	desc       = 'A cluster bar with a toolbar below it.';
 	visibility = env.Const.ManagerVisibility;
+	settings   = { clusterDesign = CLUSTER_DESIGN.Original };
 	children = {
 		Watchbar = Interface.Watchbar:Render {
 			totem = { pos = { y = 18 } };
@@ -89,10 +92,24 @@ Presets.Default = {
 	};
 };
 
+-- Each design uses the same default layout with its own cluster setting.
+for id, design in pairs({
+	ClusterBeveledSilver = CLUSTER_DESIGN.Beveled;
+	ClusterRoundGold     = CLUSTER_DESIGN.OriginalGold;
+	ClusterHexGold       = CLUSTER_DESIGN.Hex;
+	ClusterSquaredGold   = CLUSTER_DESIGN.Squared;
+}) do
+	local preset = CopyTable(Presets.Default)
+	preset.name = env.L('Cluster - %s', clusterDesignNames[design]);
+	preset.settings.clusterDesign = design;
+	Presets[id] = preset;
+end
+
 Presets.Orthodox = {
-	name       = 'Orthodox';
+	name       = env.L'Cluster - Orthodox';
 	desc       = 'A cluster bar with a toolbar below it, laid out horizontally.';
 	visibility = env.Const.ManagerVisibility;
+	settings   = { clusterDesign = CLUSTER_DESIGN.Original };
 	children = {
 		Watchbar = Interface.Watchbar:Render {
 			totem = { pos = { y = 116 } };

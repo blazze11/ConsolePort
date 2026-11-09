@@ -25,6 +25,35 @@ env.Const.ValidPoints    = CPAPI.Enum(
 	'LEFT',   'TOPLEFT',  'BOTTOMLEFT',
 	'RIGHT',  'TOPRIGHT', 'BOTTOMRIGHT'
 );
+
+local CLUSTER_DESIGN = {
+	Original     = 1;
+	OriginalGold = 2;
+	Hex          = 3;
+	Squared      = 4;
+	Beveled      = 5;
+};
+env.Const.ClusterDesign = CLUSTER_DESIGN;
+
+-- Keep saved design IDs stable when changing the selector order.
+local CLUSTER_DESIGN_ORDER = {
+	[CLUSTER_DESIGN.Original]     = 1;
+	[CLUSTER_DESIGN.Beveled]      = 2;
+	[CLUSTER_DESIGN.OriginalGold] = 3;
+	[CLUSTER_DESIGN.Hex]          = 4;
+	[CLUSTER_DESIGN.Squared]      = 5;
+};
+
+function env:IsGoldClusterDesign()
+	local design = self('clusterDesign');
+	return design == CLUSTER_DESIGN.OriginalGold or design == CLUSTER_DESIGN.Hex or design == CLUSTER_DESIGN.Squared;
+end
+
+function env:GetClusterBorderStyle()
+	local borders = self.Const.Cluster.BorderStyle;
+	return borders[self('clusterDesign')] or borders[CLUSTER_DESIGN.Original];
+end
+
 env.Const.PageDescription =  {
 	['vehicleui']   = 'Vehicle UI is active.';
 	['possessbar']  = 'Possess bar is visible, such as Mind Control or Eyes of the Beast.';
@@ -46,6 +75,7 @@ env.Const.PageDescription =  {
 ---------------------------------------------------------------
 do -- Variables
 ---------------------------------------------------------------
+local L          = env.L;
 local classColor = CreateColor(CPAPI.NormalizeColor(CPAPI.GetClassColor()));
 
 env:Register('Variables', CPAPI.Callable({
@@ -244,7 +274,7 @@ env:Register('Variables', CPAPI.Callable({
 		desc = 'Enable all modifier states for the cluster, including unmapped modifiers.';
 		advd = true;
 	};
-	swipeColor = _{Data.Color(classColor);
+	swipeColor = _{Data.Color(CreateColor(0, 0, 0, 1));
 		name = 'Swipe Color';
 		desc = 'Color of the cooldown swipe effect on buttons.';
 	};
@@ -252,9 +282,17 @@ env:Register('Variables', CPAPI.Callable({
 		name = 'Border Vertex Color';
 		desc = 'Color of the vertices on the border of buttons.';
 	};
-	clusterBorderStyle = _{Data.Select('Normal', 'Normal', 'Large', 'Beveled');
-		name = 'Main Button Border Style';
-		desc = 'Style of the border around main buttons.';
+	clusterDesign = _{
+		Data.Map(CLUSTER_DESIGN.Original, {
+			[CLUSTER_DESIGN.Original]     = L'Round Silver';
+			[CLUSTER_DESIGN.Beveled]      = L'Beveled Silver';
+			[CLUSTER_DESIGN.OriginalGold] = L'Round Gold';
+			[CLUSTER_DESIGN.Hex]          = L'Hex Gold';
+			[CLUSTER_DESIGN.Squared]      = L'Squared Gold';
+		});
+		name = L'Cluster Design';
+		desc = L'Choose the shape and finish of the cluster buttons. Gold designs also style the pet ring.';
+		optionSort = function(_, a, b) return CLUSTER_DESIGN_ORDER[a] < CLUSTER_DESIGN_ORDER[b] end;
 	};
 	---------------------------------------------------------------
 	_('Toolbar', ACTIONBARS_LABEL);
@@ -300,6 +338,21 @@ local OFS_MOD, OFS_MID, OFS_FIX = 38, 21, 4;
 local HK_ICONS_SIZE_L, HK_ICONS_SIZE_S = 32, 20;
 local HK_ATLAS_SIZE_L, HK_ATLAS_SIZE_S = 18, 12;
 -----------------------------------------------------------------------------------------------------------------------
+local function getMainButtonTextures(normal, highlight, pushed)
+	return {
+		NormalTexture         = normal;
+		PushedTexture         = pushed or normal;
+		HighlightTexture      = highlight;
+		CheckedTexture        = highlight;
+		Border                = highlight;
+		NewActionTexture      = highlight;
+		Flash                 = env.GetAsset([[Textures\Button\Hilite2x]]);
+		SpellHighlightTexture = env.GetAsset([[Textures\Button\Hilite2x.png]]);
+	};
+end
+
+local ROUND_SILVER_HIGHLIGHT = env.GetAsset([[Textures\Button\Hilite]]);
+
 env.Const.Cluster = {
 	Directions = env.Const.ValidFlyouts;
 	Types      = CPAPI.Enum('Cluster', 'ClusterHandle', 'ClusterButton', 'ClusterShadow');
@@ -357,13 +410,6 @@ env.Const.Cluster = {
 		};
 	};
 	AdjustTextures = {
-		[NOMOD] = {
-			Border                =   env.GetAsset([[Textures\Button\Hilite]]);
-			CheckedTexture        =   env.GetAsset([[Textures\Button\Hilite]]);
-			Flash                 =   env.GetAsset([[Textures\Button\Hilite2x]]);
-			NewActionTexture      =   env.GetAsset([[Textures\Button\Hilite]]);
-			SpellHighlightTexture =   env.GetAsset([[Textures\Button\Hilite2x.png]]);
-		};
 		[SHIFT] = {
 			Border                =   env.GetAsset([[Textures\Button\M1]]);
 			NormalTexture         =   env.GetAsset([[Textures\Button\M1]]);
@@ -393,28 +439,34 @@ env.Const.Cluster = {
 		};
 	};
 	Assets = {
-		CooldownBling             =   env.GetAsset([[Textures\Cooldown\Bling]]);
 		CooldownEdge              =   env.GetAsset([[Textures\Cooldown\Edge2x3.png]]);
 		MainMask                  = CPAPI.GetAsset([[Textures\Button\Mask]]);
-		MainSwipe                 =   env.GetAsset([[Textures\Cooldown\Swipe]]);
+		MainSwipe                 =   env.GetAsset([[Textures\Cluster\Shapes\RoundMainSwipe.tga]]);
 		EmptyIcon                 = CPAPI.GetAsset([[Textures\Button\EmptyIcon]]);
 	};
+	GoldEmptySlotColor = CreateColor(0.26, 0.23, 0.20, 0.76);
+	-- Sizes and distances are relative to the configured cluster size.
+	GoldShapes = {
+		[CLUSTER_DESIGN.Hex] = {
+			Asset           = 'Hex';
+			HorizontalAsset = 'HexSideways';
+			Size            = 42 / 64;
+			Middle          = 49 / 64;
+			Outward         = 35 / 64;
+			Side            = 37 / 64;
+		};
+		[CLUSTER_DESIGN.Squared] = {
+			Asset    = 'Squared';
+			MainSize = 53 / 64;
+			Size     = 34 / 62;
+			Middle   = 46 / 64;
+			Outward  = 38 / 64;
+			Side     = 38 / 64;
+		};
+	};
 	BorderStyle = {
-		Normal = {
-			NormalTexture         =   env.GetAsset([[Textures\Button\Normal]]);
-			PushedTexture         =   env.GetAsset([[Textures\Button\Hilite]]);
-			HighlightTexture      =   env.GetAsset([[Textures\Button\Hilite]]);
-		};
-		Large = {
-			NormalTexture         =   env.GetAsset([[Textures\Button\Normal2x.png]]);
-			PushedTexture         =   env.GetAsset([[Textures\Button\Normal2x.png]]);
-			HighlightTexture      =   env.GetAsset([[Textures\Button\Hilite2x.png]]);
-		};
-		Beveled = {
-			NormalTexture         = CPAPI.GetAsset([[Textures\Button\Normal]]);
-			PushedTexture         = CPAPI.GetAsset([[Textures\Button\Hilite]]);
-			HighlightTexture      =   env.GetAsset([[Textures\Button\Hilite]]);
-		};
+		[CLUSTER_DESIGN.Original] = getMainButtonTextures(env.GetAsset([[Textures\Button\Normal]]), ROUND_SILVER_HIGHLIGHT, ROUND_SILVER_HIGHLIGHT);
+		[CLUSTER_DESIGN.Beveled]  = getMainButtonTextures(CPAPI.GetAsset([[Textures\Button\Normal]]), env.GetAsset([[Textures\Cluster\BeveledMainHighlight.png]]));
 	};
 	LABConfig = {
 		clickOnDown     = true;

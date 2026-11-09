@@ -3,6 +3,14 @@ local env, db = CPAPI.GetEnv(...)
 local NOMOD, _, _, _, ALT = env.Const.Cluster.ModNames();
 local CLUSTER_BAR, CLUSTER_HANDLE, CLUSTER_BUTTON, CLUSTER_SHADOW = env.Const.Cluster.Types();
 local ClusterLayout = env.Const.Cluster.Layout;
+local GOLD_SHAPES   = env.Const.Cluster.GoldShapes;
+-- Outward axis and the side occupied by Shift in the original cluster.
+local FLYOUT_AXES = {
+	UP    = { 0;  1; -1;};
+	RIGHT = { 1;  0;  1;};
+	DOWN  = { 0; -1;  1;};
+	LEFT  = {-1;  0;  1;};
+};
 ---------------------------------------------------------------
 local Cluster = CreateFromMixins(env.DynamicWidgetMixin, env.MovableWidgetMixin);
 ---------------------------------------------------------------
@@ -10,6 +18,9 @@ local Cluster = CreateFromMixins(env.DynamicWidgetMixin, env.MovableWidgetMixin)
 function Cluster:OnLoad(buttonID, parent)
 	self.buttonID = buttonID;
 	self.header   = parent;
+	-- Keep the saved position and mover on the configured footprint.
+	self.anchor = CreateFrame('Frame', nil, parent);
+	self.anchor:SetFrameLevel(self:GetMainButton():GetFrameLevel())
 	self:OnVariableChanged()
 	env:RegisterCallbacks(self.OnVariableChanged, self,
 		'Settings/swipeColor',
@@ -31,38 +42,65 @@ function Cluster:Enumerate()
 end
 
 function Cluster:Show()
+	self.anchor:Show()
 	for _, button in self:Enumerate() do
 		button:ToggleShown(true)
 	end
 end
 
 function Cluster:Hide()
+	self.anchor:Hide()
 	for _, button in self:Enumerate() do
 		button:ToggleShown(false)
 	end
 end
 
 function Cluster:SetPoint(...)
-	local main = self:GetMainButton();
 	local p, _, _, x, y = ...;
-	main:ClearAllPoints()
+	self.anchor:ClearAllPoints()
 	if p and x and y then
-		return main:SetPoint(...)
+		-- Preset changes clear anchors on cached buttons as well as the handle.
+		local main = self:GetMainButton();
+		main:ClearAllPoints()
+		main:SetPoint('CENTER', self.anchor, 'CENTER')
+		return self.anchor:SetPoint(...)
 	end
 end
 
 function Cluster:ClearAllPoints()
-	local main = self:GetMainButton();
-	main:ClearAllPoints()
+	self.anchor:ClearAllPoints()
 end
 
 function Cluster:SetSize(size)
-	local main = self:GetMainButton();
+	local main     = self:GetMainButton();
+	local shape    = GOLD_SHAPES[env('clusterDesign')];
+	local mainSize = size * (shape and shape.MainSize or 1);
+	self.anchor:SetSize(size, size)
+	if ( main.Hotkey1 and (shape or main.clusterShape) ) then
+		main.Hotkey1:ClearAllPoints()
+		if shape then
+			main.Hotkey1:SetPoint('CENTER', 0, mainSize * 0.30)
+		else
+			main.Hotkey1:SetPoint(unpack(main.layoutData.Hotkey[1][3]))
+		end
+	end
 	for _, button in self:Enumerate() do
-		local layoutData = button.layoutData;
-		local objSize = size * (layoutData.Size or 1);
+		local layoutData        = button.layoutData;
+		local objSize           = layoutData.Size and size * layoutData.Size or mainSize;
 		local relativePointData = layoutData[button.direction];
-		if relativePointData then
+		local axes              = shape and FLYOUT_AXES[button.direction];
+		button.clusterShape = shape;
+		if axes then
+			-- Convert outward and sideways offsets to the cluster's screen direction.
+			local x, y, shiftSide = unpack(axes);
+			local prefix          = layoutData.Prefix;
+			local isMiddle        = prefix == 'M3';
+			local outward         = isMiddle and shape.Middle or shape.Outward;
+			local side            = isMiddle and 0 or shape.Side * (prefix == 'M1' and shiftSide or -shiftSide);
+			button:ClearAllPoints()
+			button:SetPoint('CENTER', main, 'CENTER', size * (x * outward + y * side), size * (y * outward - x * side))
+			objSize = size * shape.Size;
+		elseif relativePointData then
 			local p, rel, x, y = unpack(relativePointData);
 			local offset = layoutData.Offset or 1;
 			button:ClearAllPoints()
@@ -74,15 +112,15 @@ function Cluster:SetSize(size)
 end
 
 function Cluster:SetSwipeColor(color)
-	local main = self:GetMainButton();
-	main.cooldown:SetSwipeColor(color:GetRGBA())
-	main.swipeColor = color;
+	for _, button in self:Enumerate() do
+		button.cooldown:SetSwipeColor(color:GetRGBA())
+		button.swipeColor = color;
+	end
 end
 
 function Cluster:SetBorderColor(color)
 	for _, button in self:Enumerate() do
-		button.NormalTexture:SetVertexColor(color:GetRGBA())
-		button.borderColor = color;
+		button:SetBorderColor(color)
 	end
 end
 
@@ -96,6 +134,7 @@ end
 
 function Cluster:SetParent(parent)
 	self.header = parent;
+	self.anchor:SetParent(parent)
 	for _, button in self:Enumerate() do
 		button:NewHeader(parent) -- TODO: do we need to unwrap the LAB button scripts?
 	end
@@ -103,12 +142,12 @@ end
 
 function Cluster:SetDirection(direction)
 	for modifier, button in self:Enumerate() do
+		button.clusterDirection = direction;
 		if modifier == NOMOD then
 			button:SetAttribute('flyoutDirection', 'DOWN')
 		else
 			button:SetAttribute('flyoutDirection', direction)
 			button.direction = direction;
-			button:UpdateLocal(true)
 		end
 	end
 end
@@ -148,23 +187,35 @@ function Cluster:SetBindings(bindings)
 	end
 end
 
-Cluster.GetMoveTarget = Cluster.GetMainButton;
+function Cluster:GetMoveTarget()
+	return self.anchor;
+end
+
 Cluster.GetSnapSize   = CPAPI.Static(env.Const.Cluster.SnapPixels);
 
 ---------------------------------------------------------------
 local Shadow = {};
+local SHAPED_SHADOW_Y_OFFSET = 3;
 ---------------------------------------------------------------
 
 function Shadow:OnLoad(owner, relativeSize, alpha, texture, point)
 	local update = GenerateClosure(self.Update, self)
-	self.owner = owner;
-	self.point = point;
+	self.owner        = owner;
+	self.point        = point;
 	self.relativeSize = relativeSize;
+	self.baseTexture  = texture;
 	self:SetAlpha(alpha)
 	self:SetTexture(texture)
 	owner:HookScript('OnShow', update)
 	owner:HookScript('OnHide', update)
 	owner:HookScript('OnSizeChanged', update)
+end
+
+function Shadow:SetShapeTexture(texture)
+	if ( self.shapeTexture == texture ) then return end;
+	self.shapeTexture = texture;
+	self:SetTexture(texture or self.baseTexture)
+	self:Update()
 end
 
 function Shadow:Update()
@@ -173,7 +224,7 @@ function Shadow:Update()
 	self:SetShown(self.owner:IsShown())
 	self:SetParent(self.owner:GetParent())
 	self:SetSize(size, size)
-	self:SetPoint(pt, self.owner, pt, x, y)
+	self:SetPoint(pt, self.owner, pt, x, y + (self.shapeTexture and SHAPED_SHADOW_Y_OFFSET or 0))
 end
 
 ---------------------------------------------------------------
@@ -186,6 +237,21 @@ function FlyoutCooldown:OnLoad()
 	-- Flyout cluster buttons should have smaller CD font
 	local file, height, flags = self.text:GetFont()
 	self.text:SetFont(file, height * 0.75, flags)
+	self:HookScript('OnShow', self.UpdateModifierIcons)
+	self:HookScript('OnHide', self.UpdateModifierIcons)
+	hooksecurefunc(self, 'SetHideCountdownNumbers', self.UpdateModifierIcons)
+end
+
+function FlyoutCooldown:UpdateModifierIcons()
+	-- The modifier glyphs share space with the cooldown number.
+	local button = self:GetParent();
+	local showCountdown;
+	if self.GetHideCountdownNumbers then
+		showCountdown = not self:GetHideCountdownNumbers();
+	else
+		showCountdown = GetCVarBool('countdownForCooldowns');
+	end
+	button:ToggleHotkeys(button.showFlyoutIcons and not (self:IsShown() and showCountdown))
 end
 
 function FlyoutCooldown:SetDrawBling(enabled, force)
@@ -294,10 +360,10 @@ function FlyoutButton:OnLoad()
 	env:RegisterCallback('Settings/clusterShowFlyoutIcons', self.OnShowFlyoutIcons, self)
 	env:RegisterCallback('OnLoadoutConfigShown', self.OnConfigShown, self)
 
+	Mixin(self.cooldown, FlyoutCooldown):OnLoad()
 	self:OnShowAll(env('clusterShowAll'))
 	self:OnShowFlyoutIcons(env('clusterShowFlyoutIcons'))
 
-	Mixin(self.cooldown, FlyoutCooldown):OnLoad()
 	local flyoutArrow = self.FlyoutArrowContainer or self.FlyoutArrow or self.Arrow;
 	if flyoutArrow then
 		Mixin(flyoutArrow, FlyoutArrow)
@@ -314,9 +380,9 @@ end
 function FlyoutButton:OnCooldownSet(cooldown, _, duration)
 	local onCooldown = (cooldown and duration and duration > 0);
 	local fadeInForCD = onCooldown and duration > 2;
-	local hotkey1, hotkey2 = self.Hotkey1, self.Hotkey2;
-	if hotkey1 then hotkey1:SetShown(not onCooldown) end;
-	if hotkey2 then hotkey2:SetShown(not onCooldown) end;
+	if cooldown then
+		cooldown:SetDrawEdge(false)
+	end
 	self:UpdateAlpha(self.AlphaState.OnCooldown, fadeInForCD)
 end
 
@@ -327,7 +393,7 @@ end
 
 function FlyoutButton:OnShowFlyoutIcons(enabled)
 	self.showFlyoutIcons = enabled;
-	self:ToggleHotkeys(enabled)
+	self.cooldown:UpdateModifierIcons()
 end
 
 function FlyoutButton:SetAlpha(alpha, force)
@@ -380,8 +446,26 @@ function MainButton:OnLoad()
 
 	self:HookScript('OnEnter', self.OnMouseMotionFocus)
 	self:HookScript('OnLeave', self.OnMouseMotionClear)
+	self:HookScript('PostClick', self.OnControllerClick)
+	self:HookScript('OnHide', self.ClearControllerPress)
 
 	Mixin(self.cooldown, env.ProxyCooldown):OnLoad()
+end
+
+function MainButton:OnControllerClick(button, down)
+	if button ~= 'ControllerInput' or not self.texturedBorder then return end;
+	if not (down and self:IsVisible()) then
+		return self:ClearControllerPress();
+	end
+	-- Bound controller clicks do not use the native mouse press path.
+	self.controllerPressed = true;
+	self:SetButtonState('PUSHED')
+end
+
+function MainButton:ClearControllerPress()
+	if not self.controllerPressed then return end;
+	self.controllerPressed = nil;
+	self:SetButtonState('NORMAL')
 end
 
 function MainButton:OnMouseMotionFocus()
@@ -425,7 +509,35 @@ end
 
 ---------------------------------------------------------------
 local Button = Mixin({ SetNormalTexture = nop }, env.ProxyButton);
+-- Textured border tuning values range from 0 to 1.
+local BORDER_TUNING = {
+	RestingBrightness      = 0.86; -- Fraction of Border Vertex Color used at rest.
+	HoverWhiteMix          = 0.20; -- Amount of white mixed into the hover tint.
+	PressedBrightness      = 0.68; -- Fraction of the border color used while held.
+	GoldHoverOpacity       = 0.55; -- Strength of the hover highlight on gold designs.
+	BeveledHoverOpacity    = 0.72; -- Strength of the hover highlight on Beveled Silver.
+	ToggledOpacityBonus    = 0.12; -- Extra opacity over hover for the checked border.
+	ToggledHoverMultiplier = 0.25; -- Fraction of normal hover opacity while toggled on.
+};
 ---------------------------------------------------------------
+
+local function updateBorderState(button)
+	if not button.texturedBorder then return end;
+	local pressed      = button:GetButtonState() == 'PUSHED';
+	local hoverAlpha   = env:IsGoldClusterDesign() and BORDER_TUNING.GoldHoverOpacity or BORDER_TUNING.BeveledHoverOpacity;
+	local checkedAlpha = math.min(1, hoverAlpha + BORDER_TUNING.ToggledOpacityBonus);
+	if button:GetChecked() then
+		hoverAlpha = hoverAlpha * BORDER_TUNING.ToggledHoverMultiplier;
+	end
+	button.HighlightTexture:SetAlpha(pressed and 0 or hoverAlpha)
+	button.CheckedTexture:SetAlpha(pressed and 0 or checkedAlpha)
+end
+
+local function updateBorderStateAfterMouse(button)
+	if not button.texturedBorder then return end;
+	-- Mouse scripts can run before the native button state changes.
+	CPAPI.Next(updateBorderState, button)
+end
 
 function Button:OnLoad(modifier, layoutData)
 	env.ProxyButton.OnLoad(self)
@@ -437,15 +549,20 @@ function Button:OnLoad(modifier, layoutData)
 	self.PushedTexture  = self.PushedTexture  or self:GetPushedTexture()
 	self.NormalTexture  = self.NormalTexture  or self:GetNormalTexture()
 	self.HighlightTexture = self.HighlightTexture or self:GetHighlightTexture()
+	self:HookScript('OnMouseDown', updateBorderStateAfterMouse)
+	self:HookScript('OnMouseUp', updateBorderStateAfterMouse)
+	self:HookScript('OnEnter', updateBorderState)
+	hooksecurefunc(self, 'SetButtonState', updateBorderState)
+	hooksecurefunc(self, 'SetChecked', updateBorderState)
 
 	self.mod = modifier;
 	self.layoutData = layoutData;
-	self:UpdateSkin()
 	if ( layoutData.Level ) then
 		self:SetFrameLevel(layoutData.Level)
 	end
 
 	Mixin(self, modifier == NOMOD and MainButton or FlyoutButton):OnLoad()
+	self:UpdateSkin()
 end
 
 function Button:ToggleHotkeys(enabled)
@@ -457,6 +574,35 @@ end
 function Button:ToggleShown(enabled)
 	self:SetShown(enabled)
 	self:SetAttribute(env.Attributes.Hidden, not enabled)
+end
+
+function Button:SetBorderColor(color)
+	self.borderColor = color;
+	if env('clusterDesign') == env.Const.ClusterDesign.Original then
+		self.NormalTexture:SetVertexColor(color:GetRGBA())
+		if self.texturedBorder then
+			-- Clear the textured state overrides when returning to the original border.
+			self.texturedBorder = nil;
+			if self.controllerPressed then self:ClearControllerPress() end;
+			self.HighlightTexture:SetVertexColor(1, 1, 1, 1)
+			self.PushedTexture:SetVertexColor(1, 1, 1, 1)
+			self.CheckedTexture:SetVertexColor(1, 1, 1, 1)
+			self.HighlightTexture:SetAlpha(1)
+			self.CheckedTexture:SetAlpha(1)
+		end
+		return;
+	end
+	self.texturedBorder = true;
+	local r, g, b, a  = color:GetRGBA();
+	local rest        = BORDER_TUNING.RestingBrightness;
+	local lighten     = BORDER_TUNING.HoverWhiteMix;
+	local pressed     = BORDER_TUNING.PressedBrightness;
+	local hr, hg, hb  = r + (1 - r) * lighten, g + (1 - g) * lighten, b + (1 - b) * lighten;
+	self.NormalTexture:SetVertexColor(r * rest, g * rest, b * rest, a)
+	self.HighlightTexture:SetVertexColor(hr, hg, hb, a)
+	self.PushedTexture:SetVertexColor(r * pressed, g * pressed, b * pressed, a)
+	self.CheckedTexture:SetVertexColor(hr, hg, hb, a)
+	updateBorderState(self)
 end
 
 function Button:UpdateLocal(force)
@@ -475,12 +621,149 @@ function Button:GetOverlayColor()
 	return env:GetColorRGBA('procColor')
 end
 
+---------------------------------------------------------------
+-- Spell proc glow
+-- Main buttons play the intro before the loop. Flyouts pulse during the burst.
+---------------------------------------------------------------
+local PROC_GLOW_PADDING  = 1 / 14; -- eight pixels around the 112-pixel border art
+local PROC_LOOP_PADDING  = 0.2;
+local PROC_INTRO_PADDING = 0.6;
+
+local function createProcFade(group, texture, toAlpha, duration, smoothing)
+	local fade = group:CreateAnimation('Alpha');
+	fade:SetTarget(texture)
+	fade:SetOrder(1)
+	fade:SetFromAlpha(1)
+	fade:SetToAlpha(toAlpha)
+	fade:SetDuration(duration)
+	fade:SetSmoothing(smoothing)
+end
+
+local function createProcFlipBook(group, texture, duration)
+	local flipBook = group:CreateAnimation('FlipBook');
+	flipBook:SetTarget(texture)
+	flipBook:SetOrder(1)
+	flipBook:SetDuration(duration)
+	flipBook:SetFlipBookRows(4)
+	flipBook:SetFlipBookColumns(8)
+	flipBook:SetFlipBookFrames(30)
+	flipBook:SetFlipBookFrameWidth(0)
+	flipBook:SetFlipBookFrameHeight(0)
+end
+
+local function createFlyoutProcAnimations(glow, burst, loop, intro)
+	glow:SetVertexColor(1, 0.82, 0.42)
+	burst:SetVertexColor(1, 0.94, 0.70)
+	loop:SetLooping('BOUNCE')
+	createProcFade(loop, glow, 0.6, 0.5, 'IN_OUT')
+
+	local duration = 0.28;
+	local scale = intro:CreateAnimation('Scale');
+	scale:SetTarget(burst)
+	scale:SetOrder(1)
+	scale:SetDuration(duration)
+	scale:SetOrigin('CENTER', 0, 0)
+	scale:SetSmoothing('OUT')
+	scale:SetScale(1.28, 1.28)
+	createProcFade(intro, burst, 0, duration, 'OUT')
+end
+
+local function createProcGlow(button)
+	local glow  = button:CreateTexture(nil, 'OVERLAY', nil, 6);
+	local burst = button:CreateTexture(nil, 'OVERLAY', nil, 7);
+	glow:SetBlendMode('ADD')
+	burst:SetBlendMode('ADD')
+	glow:Hide()
+	burst:Hide()
+
+	local isMain = button.mod == NOMOD;
+	local loop   = button:CreateAnimationGroup();
+	local intro  = button:CreateAnimationGroup();
+	if isMain then
+		loop:SetLooping('REPEAT')
+		createProcFlipBook(loop, glow, 1)
+		createProcFlipBook(intro, burst, 0.4)
+	else
+		createFlyoutProcAnimations(glow, burst, loop, intro)
+	end
+	intro:SetScript('OnFinished', function()
+		burst:Hide()
+		if ( isMain and button.procGlowActive ) then
+			glow:Show()
+			loop:Play()
+		end
+	end)
+	button.procGlow, button.procGlowLoop = glow, loop;
+	button.procGlowBurst, button.procGlowIntro = burst, intro;
+end
+
+local function setProcGlowBounds(glow, border, padding)
+	local xPadding = border:GetWidth() * padding;
+	local yPadding = border:GetHeight() * padding;
+	glow:ClearAllPoints()
+	glow:SetPoint('TOPLEFT', border, 'TOPLEFT', -xPadding, yPadding)
+	glow:SetPoint('BOTTOMRIGHT', border, 'BOTTOMRIGHT', xPadding, -yPadding)
+end
+
+local function setProcFlipBookTexture(region, texture)
+	if region.procTexture ~= texture then
+		region:SetTexture(texture)
+		region.procTexture = texture;
+	end
+end
+
+local function showProcGlow(button)
+	if not button.procGlow then
+		createProcGlow(button)
+	end
+	local glow, burst = button.procGlow, button.procGlowBurst;
+	local border  = button.SpellHighlightTexture or button.NormalTexture;
+	local texture = button.procGlowTexture;
+	local isMain  = button.mod == NOMOD;
+	setProcGlowBounds(glow, border, isMain and PROC_LOOP_PADDING or PROC_GLOW_PADDING)
+	setProcGlowBounds(burst, border, isMain and PROC_INTRO_PADDING or PROC_GLOW_PADDING)
+	if isMain then
+		setProcFlipBookTexture(glow, texture.Loop)
+		setProcFlipBookTexture(burst, texture.Start)
+	else
+		glow:SetTexture(texture)
+		burst:SetTexture(texture)
+		-- Wedge glows follow the same rotation and mirroring as the border.
+		glow:SetTexCoord(border:GetTexCoord())
+		burst:SetTexCoord(border:GetTexCoord())
+	end
+	if not (glow:IsShown() or burst:IsShown()) then
+		burst:Show()
+		button.procGlowIntro:Play()
+		if not isMain then
+			glow:Show()
+			button.procGlowLoop:Play()
+		end
+	end
+end
+
 function Button:ShowOverlayGlow()
-	env.LIB.RoundGlow.ShowOverlayGlow(self)
+	self.procGlowActive = true;
+	if self.procGlowTexture then
+		showProcGlow(self)
+	end
 end
 
 function Button:HideOverlayGlow()
-	env.LIB.RoundGlow.HideOverlayGlow(self)
+	self.procGlowActive = nil;
+	if self.procGlow then
+		self.procGlowLoop:Stop()
+		self.procGlowIntro:Stop()
+		self.procGlow:Hide()
+		self.procGlowBurst:Hide()
+	end
+end
+
+function Button:SetProcGlowTexture(texture)
+	self.procGlowTexture = texture;
+	if self.procGlowActive then
+		showProcGlow(self)
+	end
 end
 
 ---------------------------------------------------------------
@@ -607,12 +890,8 @@ env:AddFactory(CLUSTER_SHADOW, function(_, parent, owner, layoutData)
 	return shadow;
 end)
 
-env:RegisterCallbacks(function(self)
-	local style = self.Const.Cluster.BorderStyle[self('clusterBorderStyle')];
-	for key, texture in pairs(style) do
-		self.Const.Cluster.AdjustTextures[NOMOD][key] = texture;
-	end
+env:RegisterSafeCallback('Settings/clusterDesign', function(self)
 	self:Map(CLUSTER_HANDLE, nil, function(cluster)
-		cluster:GetMainButton():Skin(true)
+		cluster:SetSize(cluster.props.size)
 	end)
-end, env, 'OnDataLoaded', 'Settings/clusterBorderStyle')
+end, env)

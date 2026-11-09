@@ -1,9 +1,22 @@
 local env, db = CPAPI.GetEnv(...)
 ---------------------------------------------------------------
+local CLUSTER_DESIGN = env.Const.ClusterDesign;
+---------------------------------------------------------------
 -- Helpers
 ---------------------------------------------------------------
 local invert = function(v) return not v end;
 local color  = function(v) return ('%.2x%.2x%.2x%.2x'):format(CreateColor(unpack(v)):GetRGBAAsBytes()) end;
+
+function env.UpgradeClusterDesign(settings)
+	local borderStyle = settings.clusterBorderStyle;
+	if not borderStyle then return end;
+	local design = settings.clusterDesign;
+	-- The old border style only applied to the original cluster design.
+	if ( not design or design == CLUSTER_DESIGN.Original ) then
+		settings.clusterDesign = borderStyle == 'Beveled' and CLUSTER_DESIGN.Beveled or CLUSTER_DESIGN.Original;
+	end
+	settings.clusterBorderStyle = nil;
+end
 
 ---------------------------------------------------------------
 -- V1 Upgrade
@@ -36,7 +49,7 @@ local V1V2DBMap = {
 	watchbars      = { 'Settings/fadeXPBar', invert };
 	hideIcons      = { 'Settings/clusterShowMainIcons', invert };
 	hideModifiers  = { 'Settings/clusterShowFlyoutIcons', invert };
-	classicBorders = { 'Settings/clusterBorderStyle', function(v) return v and 'Beveled' or 'Normal' end };
+	classicBorders = { 'Settings/clusterDesign', function(v) return v and CLUSTER_DESIGN.Beveled or CLUSTER_DESIGN.Original end };
 	borderRGB      = { 'Settings/borderColor', color };
 	expRGB         = { 'Settings/xpBarColor', color };
 	swipeRGB       = { 'Settings/swipeColor', color };
@@ -95,6 +108,7 @@ function env.ConvertV1Layout(v1)
 	end
 
 	local v2 = CopyTable(env.Presets.Default)
+	v2.settings = nil; -- preserve the design migrated from classicBorders
 	v2.name = env.Const.DefaultPresetName;
 	v2.desc = db.Locale'Player action bar setup.';
 	-- Can't track where the pet ring was located in V1, so place it in a convenient spot

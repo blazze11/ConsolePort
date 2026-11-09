@@ -110,7 +110,9 @@ do -- Data handler
 		env.db:Register('BarLayoutKey', activeLayout, true)
 
 		if not _G[activeSettings] then _G[activeSettings] = {} end;
-		local settings = CPAPI.Proxy(_G[activeSettings], self.Defaults);
+		local settings = _G[activeSettings];
+		env.UpgradeClusterDesign(settings)
+		settings = CPAPI.Proxy(settings, self.Defaults);
 		env:Register('Settings', settings, true)
 		env:Default(settings)
 		env:Save('Settings', activeSettings)
@@ -501,6 +503,7 @@ ConsolePort:AddSlashCommand('layout', {
 function env:ApplyPresetOptions(preset)
 	-- Apply the options a preset was saved with, then strip them so the layout doesn't carry them.
 	if preset.settings then
+		env.UpgradeClusterDesign(preset.settings)
 		for path, data in pairs(preset.settings) do
 			self('Settings/'..path, data)
 		end

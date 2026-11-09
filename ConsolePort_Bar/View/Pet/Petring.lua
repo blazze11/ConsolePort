@@ -1,6 +1,28 @@
 local env, db = CPAPI.GetEnv(...)
 local FadeIn, FadeOut = db.Alpha.FadeIn, db.Alpha.FadeOut;
 ---------------------------------------------------------------
+local GOLD_PORTRAIT_BORDER = env.GetAsset[[Textures\Cluster\GoldMain.tga]];
+local PET_PORTRAIT_OUTER   = env.GetAsset[[Textures\Button\Normal2x.png]];
+local PET_STATUS_TEXTURE   = env.GetAsset[[Textures\Button\Hilite2x.png]];
+local PET_RING_TEXTURES = {
+	Original = {
+		Border    = env.GetAsset[[Textures\Button\PetRing]];
+		Pushed    = env.GetAsset[[Textures\Button\Pet10Pushed]];
+		Highlight = env.GetAsset[[Textures\Button\Pet10Hilite]];
+		Checked   = env.GetAsset[[Textures\Button\Pet10Checked]];
+	};
+	Gold = {
+		Border    = env.GetAsset[[Textures\Cluster\GoldPetRing.tga]];
+		Highlight = env.GetAsset[[Textures\Cluster\GoldPetButtonHighlight.tga]];
+		Checked   = env.GetAsset[[Textures\Cluster\GoldPetButtonChecked.tga]];
+	};
+	Beveled = {
+		Border    = env.GetAsset[[Textures\Cluster\BeveledPetRing.png]];
+		Highlight = env.GetAsset[[Textures\Cluster\BeveledPetButtonHighlight.png]];
+		Checked   = env.GetAsset[[Textures\Cluster\BeveledPetButtonChecked.png]];
+	};
+};
+---------------------------------------------------------------
 CPPetRingButton = Mixin({
 ---------------------------------------------------------------
 	ActiveIconVertex   = CreateColor(1.0, 1.0, 1.0);
@@ -81,17 +103,14 @@ function CPPetRingButton:Init(i)
 	self.HighlightTexture = self:GetHighlightTexture()
 	self.CheckedTexture   = self:GetCheckedTexture()
 
-	self.PushedTexture:SetTexture(env.GetAsset'Textures\\Button\\Pet10Pushed')
 	self.PushedTexture:SetPoint('TOPLEFT', -6, 6)
 	self.PushedTexture:SetPoint('BOTTOMRIGHT', 6, -6)
 	self.PushedTexture:SetRotation(self.textureRotation)
 
-	self.HighlightTexture:SetTexture(env.GetAsset'Textures\\Button\\Pet10Hilite')
 	self.HighlightTexture:SetPoint('TOPLEFT', -6, 6)
 	self.HighlightTexture:SetPoint('BOTTOMRIGHT', 6, -6)
 	self.HighlightTexture:SetRotation(self.textureRotation)
 
-	self.CheckedTexture:SetTexture(env.GetAsset'Textures\\Button\\Pet10Checked')
 	self.CheckedTexture:SetPoint('TOPLEFT', -6, 6)
 	self.CheckedTexture:SetPoint('BOTTOMRIGHT', 6, -6)
 	self.CheckedTexture:SetRotation(self.textureRotation)
@@ -100,6 +119,12 @@ function CPPetRingButton:Init(i)
 	self.cooldown:SetDrawBling(false)
 	self.cooldown:SetHideCountdownNumbers(false)
 	self.cooldown:SetScript('OnCooldownDone', OnCooldownDone)
+end
+
+function CPPetRingButton:UpdateEmptySlotColor(goldBorders)
+	if self.hasPetAction then return end;
+	local color = goldBorders and env.Const.Cluster.GoldEmptySlotColor or self.ActiveIconVertex;
+	self.icon:SetVertexColor(color:GetRGBA())
 end
 
 function CPPetRingButton:OnEnter()
@@ -150,6 +175,7 @@ end
 function CPPetRingButton:Update()
 	local i = self:GetID()
 	local name, texture, isToken, isActive, autoCastAllowed, autoCastEnabled = GetPetActionInfo(i)
+	self.hasPetAction = not not texture;
 	if ( not isToken ) then
 		self:SetIcon(texture)
 		self.tooltipName = name;
@@ -178,7 +204,9 @@ function CPPetRingButton:Update()
 	end
 	if ( texture ) then
 		local color = GetPetActionSlotUsable(i) and self.ActiveIconVertex or self.InactiveIconVertex;
-		self.icon:SetVertexColor(color:GetRGB())
+		self.icon:SetVertexColor(color:GetRGBA())
+	else
+		self:UpdateEmptySlotColor(env:IsGoldClusterDesign())
 	end
 	self:UpdateCooldown()
 end
@@ -259,8 +287,8 @@ function CPPetRing:OnLoad()
 		button:Init(i)
 	end
 
-	self.Power:SetFillTexture(env.Const.Cluster.BorderStyle.Large.HighlightTexture)
-	self.Health:SetFillTexture(env.Const.Cluster.BorderStyle.Large.HighlightTexture)
+	self.Power:SetFillTexture(PET_STATUS_TEXTURE)
+	self.Health:SetFillTexture(PET_STATUS_TEXTURE)
 
 	self.Health:SetHalfRotation(HALF)
 	self.Power:SetHalfRotation(-HALF)
@@ -270,8 +298,8 @@ function CPPetRing:OnLoad()
 
 	env:RegisterCallback('OnLoadoutConfigShown', self.OnLoadoutConfigShown, self)
 	env:RegisterCallbacks(self.OnVariableChanged, self,
-		'Settings/clusterBorderStyle',
-		'Settings/borderColor'
+		'Settings/borderColor',
+		'Settings/clusterDesign'
 	);
 end
 
@@ -304,13 +332,34 @@ function CPPetRing:OnPropsUpdated()
 end
 
 function CPPetRing:OnVariableChanged()
-	local style = env.Const.Cluster.BorderStyle[env('clusterBorderStyle')];
-	self.Center.InnerBorder:SetTexture(style.NormalTexture)
-	self.Center.OuterBorder:SetTexture(env.Const.Cluster.BorderStyle.Large.NormalTexture)
+	local style       = env:GetClusterBorderStyle();
+	local goldBorders = env:IsGoldClusterDesign();
+	local beveled     = env('clusterDesign') == env.Const.ClusterDesign.Beveled;
+	local textures    = goldBorders and PET_RING_TEXTURES.Gold or beveled and PET_RING_TEXTURES.Beveled or PET_RING_TEXTURES.Original;
+	local r, g, b, a  = env:GetColorRGBA('borderColor');
+	self.Center.InnerBorder:SetTexture(goldBorders and GOLD_PORTRAIT_BORDER or style.NormalTexture)
+	-- Keep the silver outer rim thin so it clears the health and focus arcs.
+	self.Center.OuterBorder:SetTexture(goldBorders and GOLD_PORTRAIT_BORDER or PET_PORTRAIT_OUTER)
+	self.Ring.Border:SetTexture(textures.Border)
+	self.Center.InnerBorder:SetVertexColor(r, g, b, a)
+	self.Center.OuterBorder:SetVertexColor(r, g, b, a)
+	self.Ring.Border:SetVertexColor(r, g, b, a)
 
-	local color = env:GetColor('borderColor')
-	self.Center.InnerBorder:SetVertexColor(color:GetRGBA())
-	self.Center.OuterBorder:SetVertexColor(color:GetRGBA())
+	local background = self.Background.Background;
+	if goldBorders then
+		background:SetVertexColor(env.Const.Cluster.GoldEmptySlotColor:GetRGBA())
+	else
+		background:SetVertexColor(0.5, 0.5, 0.5, 1)
+	end
+	for _, button in ipairs(self.Buttons) do
+		button.PushedTexture:SetTexture(textures.Pushed or textures.Highlight)
+		button.HighlightTexture:SetTexture(textures.Highlight)
+		button.CheckedTexture:SetTexture(textures.Checked)
+		button.PushedTexture:SetVertexColor(r, g, b, a)
+		button.HighlightTexture:SetVertexColor(r, g, b, a)
+		button.CheckedTexture:SetVertexColor(r, g, b, a)
+		button:UpdateEmptySlotColor(goldBorders)
+	end
 end
 
 function CPPetRing:OnShow()
