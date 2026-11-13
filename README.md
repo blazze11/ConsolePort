@@ -10,6 +10,6 @@ The main buttons flash white inward, then loop with a gold glow around the rim.
 
 This 37-second recording shows proc glows and cooldown sweeps on Beveled Silver, Round Gold, Hex Gold, and Squared Gold.
 
-[Watch the combined gameplay preview](cluster-designs-gameplay.mp4)
+[![Combined gameplay preview of all four cluster designs](cluster-designs-gameplay.gif)](cluster-designs-gameplay.mp4)
 
 [Cluster designs screenshot](cluster-designs.png)
