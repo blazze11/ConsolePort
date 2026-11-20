@@ -1,20 +1,40 @@
 local env, db = CPAPI.GetEnv(...)
 local FadeIn, FadeOut = db.Alpha.FadeIn, db.Alpha.FadeOut;
 ---------------------------------------------------------------
+local PET_STATUS_TEXTURE      = env.GetAsset[[Textures\PetRing\StatusFill.png]];
+local TEXTURED_RIM_BRIGHTNESS = 0.86;
+local STATUS_UPDATE_INTERVAL  = 0.1;
+
+local function getPetRingTextures(style)
+	local path = env.GetAsset([[Textures\PetRing\%s]], style);
+	return {
+		Portrait = path .. 'Portrait.png';
+		Wheel    = path .. 'Wheel.png';
+		Status   = path .. 'Status.png';
+		Slot     = path .. 'Slot.png';
+	};
+end
+
+local PET_RING_TEXTURES = {
+	Original = getPetRingTextures('RoundSilver');
+	Beveled  = getPetRingTextures('BeveledSilver');
+	Gold     = getPetRingTextures('Gold');
+};
+---------------------------------------------------------------
 CPPetRingButton = Mixin({
 ---------------------------------------------------------------
 	ActiveIconVertex   = CreateColor(1.0, 1.0, 1.0);
 	InactiveIconVertex = CreateColor(0.4, 0.4, 0.4);
 	CornerVertexOffset = {
-		[UPPER_LEFT_VERTEX]  = { -10, -4 };
-		[UPPER_RIGHT_VERTEX] = {  10, -4 };
-		[LOWER_LEFT_VERTEX]  = {   0, -4 };
-		[LOWER_RIGHT_VERTEX] = {   0, -4 };
+		[UPPER_LEFT_VERTEX]  = {-10; -4;};
+		[UPPER_RIGHT_VERTEX] = { 10; -4;};
+		[LOWER_LEFT_VERTEX]  = {  0; -4;};
+		[LOWER_RIGHT_VERTEX] = {  0; -4;};
 	};
 }, CPActionButtonMixin);
 ---------------------------------------------------------------
 
-local function OnCooldownDone(self)
+local function onCooldownDone(self)
 	local button = self:GetParent()
 	button.onCooldown = nil;
 	button:SetChecked(false)
@@ -81,25 +101,31 @@ function CPPetRingButton:Init(i)
 	self.HighlightTexture = self:GetHighlightTexture()
 	self.CheckedTexture   = self:GetCheckedTexture()
 
-	self.PushedTexture:SetTexture(env.GetAsset'Textures\\Button\\Pet10Pushed')
 	self.PushedTexture:SetPoint('TOPLEFT', -6, 6)
 	self.PushedTexture:SetPoint('BOTTOMRIGHT', 6, -6)
 	self.PushedTexture:SetRotation(self.textureRotation)
+	self.PushedTexture:SetBlendMode('BLEND')
 
-	self.HighlightTexture:SetTexture(env.GetAsset'Textures\\Button\\Pet10Hilite')
 	self.HighlightTexture:SetPoint('TOPLEFT', -6, 6)
 	self.HighlightTexture:SetPoint('BOTTOMRIGHT', 6, -6)
 	self.HighlightTexture:SetRotation(self.textureRotation)
+	self.HighlightTexture:SetBlendMode('ADD')
 
-	self.CheckedTexture:SetTexture(env.GetAsset'Textures\\Button\\Pet10Checked')
 	self.CheckedTexture:SetPoint('TOPLEFT', -6, 6)
 	self.CheckedTexture:SetPoint('BOTTOMRIGHT', 6, -6)
 	self.CheckedTexture:SetRotation(self.textureRotation)
+	self.CheckedTexture:SetBlendMode('ADD')
 
 	self.cooldown:SetDrawSwipe(false)
 	self.cooldown:SetDrawBling(false)
 	self.cooldown:SetHideCountdownNumbers(false)
-	self.cooldown:SetScript('OnCooldownDone', OnCooldownDone)
+	self.cooldown:SetScript('OnCooldownDone', onCooldownDone)
+end
+
+function CPPetRingButton:UpdateEmptySlotColor(goldBorders)
+	if self.hasPetAction then return end;
+	local color = goldBorders and env.Const.Cluster.GoldEmptySlotColor or self.ActiveIconVertex;
+	self.icon:SetVertexColor(color:GetRGBA())
 end
 
 function CPPetRingButton:OnEnter()
@@ -150,6 +176,7 @@ end
 function CPPetRingButton:Update()
 	local i = self:GetID()
 	local name, texture, isToken, isActive, autoCastAllowed, autoCastEnabled = GetPetActionInfo(i)
+	self.hasPetAction = not not texture;
 	if ( not isToken ) then
 		self:SetIcon(texture)
 		self.tooltipName = name;
@@ -178,7 +205,9 @@ function CPPetRingButton:Update()
 	end
 	if ( texture ) then
 		local color = GetPetActionSlotUsable(i) and self.ActiveIconVertex or self.InactiveIconVertex;
-		self.icon:SetVertexColor(color:GetRGB())
+		self.icon:SetVertexColor(color:GetRGBA())
+	else
+		self:UpdateEmptySlotColor(env:IsGoldClusterDesign())
 	end
 	self:UpdateCooldown()
 end
@@ -226,6 +255,7 @@ end
 ---------------------------------------------------------------
 CPPetRing = Mixin({
 ---------------------------------------------------------------
+	OnEvent = CPAPI.EventMixin.OnEvent;
 	Events  = {
 		'PET_BAR_UPDATE_COOLDOWN';
 		'PET_BAR_UPDATE';
@@ -245,22 +275,16 @@ CPPetRing = Mixin({
 }, env.ConfigurableWidgetMixin);
 
 function CPPetRing:OnLoad()
-	for _, event in ipairs(self.Events) do
-		pcall(self.RegisterEvent, self, event)
-	end
-	for _, event in ipairs(self.PetEvents) do
-		pcall(self.RegisterUnitEvent, self, event, 'pet')
-	end
-	for _, event in ipairs(self.PlayerEvents) do
-		pcall(self.RegisterUnitEvent, self, event, 'player')
-	end
+	CPAPI.RegisterFrameForEvents(self, self.Events)
+	CPAPI.RegisterFrameForUnitEvents(self, self.PetEvents, 'pet')
+	CPAPI.RegisterFrameForUnitEvents(self, self.PlayerEvents, 'player')
 
 	for i, button in ipairs(self.Buttons) do
 		button:Init(i)
 	end
 
-	self.Power:SetFillTexture(env.Const.Cluster.BorderStyle.Large.HighlightTexture)
-	self.Health:SetFillTexture(env.Const.Cluster.BorderStyle.Large.HighlightTexture)
+	self.Power:SetFillTexture(PET_STATUS_TEXTURE)
+	self.Health:SetFillTexture(PET_STATUS_TEXTURE)
 
 	self.Health:SetHalfRotation(HALF)
 	self.Power:SetHalfRotation(-HALF)
@@ -270,8 +294,8 @@ function CPPetRing:OnLoad()
 
 	env:RegisterCallback('OnLoadoutConfigShown', self.OnLoadoutConfigShown, self)
 	env:RegisterCallbacks(self.OnVariableChanged, self,
-		'Settings/clusterBorderStyle',
-		'Settings/borderColor'
+		'Settings/borderColor',
+		'Settings/clusterDesign'
 	);
 end
 
@@ -303,14 +327,38 @@ function CPPetRing:OnPropsUpdated()
 	self:SetProps(self.props)
 end
 
-function CPPetRing:OnVariableChanged()
-	local style = env.Const.Cluster.BorderStyle[env('clusterBorderStyle')];
-	self.Center.InnerBorder:SetTexture(style.NormalTexture)
-	self.Center.OuterBorder:SetTexture(env.Const.Cluster.BorderStyle.Large.NormalTexture)
+local function setRimTexture(region, texture, r, g, b, a)
+	region:SetTexture(texture)
+	region:SetVertexColor(r, g, b, a)
+	if region.SetTexelSnappingBias and region.SetSnapToPixelGrid then
+		region:SetTexelSnappingBias(0)
+		region:SetSnapToPixelGrid(false)
+	end
+end
 
-	local color = env:GetColor('borderColor')
-	self.Center.InnerBorder:SetVertexColor(color:GetRGBA())
-	self.Center.OuterBorder:SetVertexColor(color:GetRGBA())
+function CPPetRing:OnVariableChanged()
+	local goldBorders = env:IsGoldClusterDesign();
+	local beveled     = env('clusterDesign') == env.Const.ClusterDesign.Beveled;
+	local textures    = goldBorders and PET_RING_TEXTURES.Gold or beveled and PET_RING_TEXTURES.Beveled or PET_RING_TEXTURES.Original;
+	local r, g, b, a  = env:GetColorRGBA('borderColor');
+	local rest = (goldBorders or beveled) and TEXTURED_RIM_BRIGHTNESS or 1;
+	local rimR, rimG, rimB = r * rest, g * rest, b * rest;
+	setRimTexture(self.Center.InnerBorder, textures.Portrait, rimR, rimG, rimB, a)
+	setRimTexture(self.Center.OuterBorder, textures.Status, rimR, rimG, rimB, a)
+	setRimTexture(self.Ring.Border, textures.Wheel, rimR, rimG, rimB, a)
+
+	local background = self.Background.Background;
+	if goldBorders then
+		background:SetVertexColor(env.Const.Cluster.GoldEmptySlotColor:GetRGBA())
+	else
+		background:SetVertexColor(0.5, 0.5, 0.5, 1)
+	end
+	for _, button in ipairs(self.Buttons) do
+		setRimTexture(button.PushedTexture, textures.Slot, r * 0.60, g * 0.60, b * 0.60, a)
+		setRimTexture(button.HighlightTexture, textures.Slot, r, g, b, a * 0.55)
+		setRimTexture(button.CheckedTexture, textures.Slot, r, g, b, a * 0.72)
+		button:UpdateEmptySlotColor(goldBorders)
+	end
 end
 
 function CPPetRing:OnShow()
@@ -329,20 +377,11 @@ function CPPetRing:OnLeave()
 	self:FadeOut()
 end
 
-function CPPetRing:OnEvent(event, ...)
-	if self[event] then
-		return self[event](self, ...)
-	end
-	self:Update()
-end
-
 do local UnitExists = UnitExists;
 	function CPPetRing:OnUpdate(elapsed)
 		self.elapsed = (self.elapsed or 0) + elapsed;
-		if self.elapsed > 0.1 then
-			self.elapsed = 0;
-			return;
-		end
+		if self.elapsed < STATUS_UPDATE_INTERVAL then return end;
+		self.elapsed = self.elapsed % STATUS_UPDATE_INTERVAL;
 		local unit, powerType = self.unit, self.powerType;
 		if not UnitExists(unit) then return end;
 		self:UpdateHealth(unit)
@@ -410,6 +449,14 @@ function CPPetRing:Update()
 		button:Update()
 	end
 end
+
+CPPetRing.PET_BAR_UPDATE               = CPPetRing.Update;
+CPPetRing.PET_SPECIALIZATION_CHANGED   = CPPetRing.Update;
+CPPetRing.PLAYER_CONTROL_GAINED        = CPPetRing.Update;
+CPPetRing.PLAYER_CONTROL_LOST          = CPPetRing.Update;
+CPPetRing.PLAYER_FARSIGHT_FOCUS_CHANGED = CPPetRing.Update;
+CPPetRing.UNIT_AURA                    = CPPetRing.Update;
+CPPetRing.UNIT_FLAGS                   = CPPetRing.Update;
 
 function CPPetRing:UpdateCooldowns()
 	local time = GetTime()

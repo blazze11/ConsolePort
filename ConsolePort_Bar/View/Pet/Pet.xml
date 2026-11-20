@@ -71,11 +71,11 @@
 				<Layers>
 					<Layer level="BACKGROUND">
 						<MaskTexture parentKey="Mask" setAllPoints="true"
-							file="Interface\AddOns\ConsolePort_Bar\Assets\Textures\Button\PetRingMask"/>
+							file="Interface\AddOns\ConsolePort_Bar\Assets\Textures\PetRing\IconMask.png"/>
 					</Layer>
 					<Layer level="OVERLAY">
-						<Texture parentKey="Border" setAllPoints="true" rotation="18"
-							file="Interface\AddOns\ConsolePort_Bar\Assets\Textures\Button\PetRing"/>
+						<Texture parentKey="Border" setAllPoints="true"
+							file="Interface\AddOns\ConsolePort_Bar\Assets\Textures\PetRing\RoundSilverWheel.png"/>
 					</Layer>
 				</Layers>
 			</Frame>

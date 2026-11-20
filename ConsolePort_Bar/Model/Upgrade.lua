@@ -1,9 +1,30 @@
 local env, db = CPAPI.GetEnv(...)
 ---------------------------------------------------------------
+local CLUSTER_DESIGN = env.Const.ClusterDesign;
+---------------------------------------------------------------
 -- Helpers
 ---------------------------------------------------------------
 local invert = function(v) return not v end;
-local color  = function(v) return ('%.2x%.2x%.2x%.2x'):format(CreateColor(unpack(v)):GetRGBAAsBytes()) end;
+local color  = function(v) return db.Data.Color(unpack(v)):GetHex() end;
+
+function env.UpgradeClusterSettings(settings)
+	local swipeColor = rawget(settings, 'swipeColor');
+	if swipeColor ~= nil then
+		if rawget(settings, 'clusterSwipeColor') == nil then
+			settings.clusterSwipeColor = swipeColor;
+		end
+		settings.swipeColor = nil;
+	end
+
+	local borderStyle = settings.clusterBorderStyle;
+	if not borderStyle then return end;
+	local design = settings.clusterDesign;
+	-- The old border style only applied to the original cluster design.
+	if ( not design or design == CLUSTER_DESIGN.Original ) then
+		settings.clusterDesign = borderStyle == 'Beveled' and CLUSTER_DESIGN.Beveled or CLUSTER_DESIGN.Original;
+	end
+	settings.clusterBorderStyle = nil;
+end
 
 ---------------------------------------------------------------
 -- V1 Upgrade
@@ -21,26 +42,24 @@ function env.UpgradeFromV1()
 	if v1 then
 		ConsolePort_BarSetup = nil;
 		CPAPI.Log('ConsolePort: upgrading action bar layout...')
-		local v2, settings = env.ConvertV1Layout(v1);
-		for path, value in pairs(settings) do
-			env(path, value);
-		end
+		local v2 = env.ConvertV1Layout(v1);
+		env:ApplyPresetOptions(v2)
 		return v2;
 	end
 end
 
 -- Map V1 table -> V2 DB
 local V1V2DBMap = {
-	showbuttons    = { 'Settings/clusterShowAll' };
-	hidewatchbars  = { 'Settings/enableXPBar', invert };
-	watchbars      = { 'Settings/fadeXPBar', invert };
-	hideIcons      = { 'Settings/clusterShowMainIcons', invert };
-	hideModifiers  = { 'Settings/clusterShowFlyoutIcons', invert };
-	classicBorders = { 'Settings/clusterBorderStyle', function(v) return v and 'Beveled' or 'Normal' end };
-	borderRGB      = { 'Settings/borderColor', color };
-	expRGB         = { 'Settings/xpBarColor', color };
-	swipeRGB       = { 'Settings/swipeColor', color };
-	tintRGB        = { 'Settings/tintColor', color };
+	showbuttons    = { 'clusterShowAll' };
+	hidewatchbars  = { 'enableXPBar', invert };
+	watchbars      = { 'fadeXPBar', invert };
+	hideIcons      = { 'clusterShowMainIcons', invert };
+	hideModifiers  = { 'clusterShowFlyoutIcons', invert };
+	classicBorders = { 'clusterDesign', function(v) return v and CLUSTER_DESIGN.Beveled or CLUSTER_DESIGN.Original end };
+	borderRGB      = { 'borderColor', color };
+	expRGB         = { 'xpBarColor', color };
+	swipeRGB       = { 'clusterSwipeColor', color };
+	tintRGB        = { 'tintColor', color };
 };
 
 -- Map V1 table -> V2 Layout
@@ -61,11 +80,11 @@ function env.ConvertV1Layout(v1)
 	for deprecated, value in pairs(v1) do
 		local map = V1V2DBMap[deprecated];
 		if map then
-			local path, conv = unpack(map)
+			local key, conv = unpack(map)
 			if conv then
 				value = conv(value)
 			end
-			settings[path] = value;
+			settings[key] = value;
 		end
 	end
 
@@ -95,6 +114,7 @@ function env.ConvertV1Layout(v1)
 	end
 
 	local v2 = CopyTable(env.Presets.Default)
+	v2.settings = settings;
 	v2.name = env.Const.DefaultPresetName;
 	v2.desc = db.Locale'Player action bar setup.';
 	-- Can't track where the pet ring was located in V1, so place it in a convenient spot
@@ -122,7 +142,7 @@ function env.ConvertV1Layout(v1)
 
 	-- Clean up
 	env:Register('v2', nil, true)
-	return v2, settings;
+	return v2;
 end
 
 ---------------------------------------------------------------
